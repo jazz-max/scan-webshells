@@ -37,16 +37,30 @@ SIG = [
  (re.compile(rb'zip://[^"\']{0,40}\.tmp'),                                  'zip:// загрузчик'),
  # hex/octal-экранированные суперглобалы — легитимный код так не пишет (sup/index.php, загрузчики)
  (re.compile(rb'\\137\\x52\\x45|\\x5f\\x52\\x45\\x51|\\x52\\x45\\x51\\x55\\x45\\x53\\x54|\\x5f\\x50\\x4f\\x53\\x54|\\x5f\\x43\\x4f\\x4f\\x4b|\\x5f\\x53\\x45\\x52\\x56|\\x7a\\x69\\x70\\x3a'), 'hex-обфускация суперглобала/zip'),
+ # --- Joomla-кампания (autoload-переинфектор + дроп файл-менеджеров в папках-фамилиях) ---
+ (re.compile(rb'zym_decrypt'),                                              'zym_decrypt загрузчик (Joomla)'),
+ (re.compile(rb'cebp_bcra|furyy_rkrp|cnffgueh|flfgrz\b|cnffgue'),           'ROT13-обфускация шелла'),  # proc_open/shell_exec/passthru/system в rot13
+ (re.compile(rb'EVAL\s*\('),                                               'EVAL-обфускация'),         # верхний регистр = обход наивного grep
+ (re.compile(rb'\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbb\xb4\xe6\x8a\xa4'),         'китайский шелл'),          # 系统维护 (系统维护工具)
+ (re.compile(rb'class MediaLibraryManager|Advanced Shell|Secure File Manager|private\s+\$cp\s*,\s*\$rp\s*,\s*\$dp|x9666'), 'веб-шелл (file manager)'),
+ (re.compile(rb'(?s)RewriteEngine\s+off.{0,200}Require all granted'),       'htaccess php-реактиватор'),
+ # ввод НАПРЯМУЮ в исполняющую функцию — высокосигнальный RCE (мало ложных)
+ (re.compile(rb'(?:eval|assert|system|shell_exec|passthru|proc_open|popen|pcntl_exec|create_function)\s*\(\s*@?\s*(?:base64_decode\s*\(\s*|stripslashes\s*\(\s*|trim\s*\(\s*)*\$_(?:GET|POST|REQUEST|COOKIE)'), 'ввод напрямую в eval/system'),
 ]
 MEDIA_EXT = ('.ico','.gif','.wma','.wmv','.jpg','.jpeg','.png','.bmp','.txt','.css','.js')
 PHP_EXT = ('.php','.php3','.php4','.php5','.php7','.phtml','.phps','.inc','.phar','.module','.tmp')
-WHITELIST = (re.compile(rb'Akeeba|kickstart\.php|GNU General Public'),)  # легитимные установщики
+WHITELIST = (re.compile(rb'AKEEBA KICKSTART|Akeeba\\Engine|akeeba\.com'),)  # легитимный установщик Akeeba
 # «опасные» конструкции — чтобы PHP в медиа/txt считать шеллом только при их наличии
 DANGER = re.compile(rb'eval\s*\(|assert\s*\(|base64_decode|gzinflate|gzuncompress|str_rot13'
                     rb'|shell_exec|passthru|popen|proc_open|system\s*\('
                     rb'|\$_(?:POST|GET|REQUEST|COOKIE|SERVER)|create_function'
                     rb'|move_uploaded_file|session_start|preg_replace\s*\(')
-SKIP_DIRS = ('/vendor/', '/node_modules/', '/.git/')
+SKIP_FULL = ('node_modules', '.git')   # пропускать целиком
+# vendor пропускаем по объёму, НО composer-автозагрузчики проверяем всегда
+# (autoload_real.php — типичная цель переинфекторов, исполняется на каждом запросе)
+COMPOSER_FILES = {'autoload_real.php', 'autoload_static.php', 'autoload_classmap.php',
+                  'autoload_namespaces.php', 'autoload_psr4.php', 'autoload_files.php',
+                  'autoload.php', 'ClassLoader.php', 'InstalledVersions.php'}
 
 # маркеры именно ВСТАВЛЕННОГО загрузчика (для распознавания INJECT-блока)
 LOADER_IN_BLOCK = re.compile(
@@ -55,6 +69,7 @@ LOADER_IN_BLOCK = re.compile(
     rb'|metaphone\s*\('                                # метка семейства A
     rb'|\(\s*["\']~["\']\s*,\s*["\']\s["\']\s*\)'      # range("~"," ")
     rb'|"\\176"|"\\x7e"'                               # hex-вариант "~"
+    rb'|zym_decrypt'                                   # Joomla autoload-переинфектор
 )
 PHP_OPEN = re.compile(rb'<\?php', re.I)
 
@@ -105,26 +120,34 @@ def classify(data, ext):
 def injected_block(data):
     """
     Если файл = вредоносная вставка сверху + легитимный код, вернёт кортеж
-    (start, end, new_content), иначе None.
-    new_content — то, что нужно записать после лечения.
+    (start, end, new_content), иначе None. Снимает ВСЕ идущие подряд в начале
+    вредоносные <?php...?> блоки (инъекция может быть из нескольких блоков,
+    как у zym_decrypt в autoload_real.php).
     """
-    # допускаем только BOM/пробелы перед первым <?php
-    m = PHP_OPEN.search(data)
-    if not m:
+    WS = b'\xef\xbb\xbf \t\r\n'
+    first = PHP_OPEN.search(data)
+    if not first or data[:first.start()].strip(WS):
+        return None                       # перед инъекцией есть посторонние данные
+    offset = first.start()
+    removed = False
+    while True:
+        m = PHP_OPEN.search(data, offset)
+        if not m or data[offset:m.start()].strip(WS):
+            break                         # дальше идёт не <?php-блок вплотную — это уже код
+        end = data.find(b'?>', m.end())
+        if end == -1:
+            break
+        if not LOADER_IN_BLOCK.search(data[m.start():end + 2]):
+            break                         # очередной блок чистый => начало настоящего кода
+        offset = end + 2
+        removed = True
+    if not removed:
         return None
-    if data[:m.start()].strip(b'\xef\xbb\xbf \t\r\n'):
-        return None  # перед инъекцией есть посторонние данные — не наш случай
-    end = data.find(b'?>', m.end())
-    if end == -1:
-        return None
-    block = data[m.start():end + 2]
-    if not LOADER_IN_BLOCK.search(block):
-        return None  # первый блок не похож на загрузчик
-    tail = data[end + 2:]
-    if len(tail.strip()) < 50 or b'<?php' not in tail:
-        return None  # после блока нет осмысленного кода => это FULL-шелл, не INJECT
-    new_content = data[:m.start()] + tail.lstrip(b'\r\n')
-    return (m.start(), end + 2, new_content)
+    tail = data[offset:]
+    if len(tail.strip()) < 30 or b'<?php' not in tail:
+        return None                       # после блоков нет кода => это FULL-шелл, не INJECT
+    new_content = data[:first.start()] + tail.lstrip(b'\r\n')
+    return (first.start(), offset, new_content)
 
 
 def _progress(msg):
@@ -151,9 +174,15 @@ def list_files(root, progress=True):
     """Быстрый обход дерева -> список путей (с учётом пропускаемых каталогов)."""
     files = []
     for dp, dirs, fs in os.walk(root):
-        if any(s.strip('/') in dp.split(os.sep) for s in SKIP_DIRS):
-            dirs[:] = []   # не спускаться внутрь vendor/node_modules/.git (быстрее)
+        parts = dp.replace(os.sep, '/').split('/')
+        if any(s in parts for s in SKIP_FULL):
+            dirs[:] = []                       # node_modules/.git — целиком мимо
             continue
+        if 'vendor' in parts:                  # внутри vendor читаем только composer-автозагрузчики
+            for fn in fs:
+                if fn in COMPOSER_FILES:
+                    files.append(os.path.join(dp, fn))
+            continue                           # не прунить: нужно дойти до vendor/composer/
         for fn in fs:
             files.append(os.path.join(dp, fn))
         if progress and len(files) % 2000 < len(fs) + 1:
