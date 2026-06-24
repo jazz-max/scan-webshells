@@ -44,6 +44,7 @@ SIG = [
  (re.compile(rb'\xe7\xb3\xbb\xe7\xbb\x9f\xe7\xbb\xb4\xe6\x8a\xa4'),         'китайский шелл'),          # 系统维护 (系统维护工具)
  (re.compile(rb'class MediaLibraryManager|Advanced Shell|Secure File Manager|private\s+\$cp\s*,\s*\$rp\s*,\s*\$dp|x9666'), 'веб-шелл (file manager)'),
  (re.compile(rb'(?s)RewriteEngine\s+off.{0,200}Require all granted'),       'htaccess php-реактиватор'),
+ (re.compile(rb"""\$_FILES\[['"]Filedata['"]\]|_REQUEST\[['"]folder['"]\]"""), 'непроверенный аплоадер (Uploadify)'),
  # ввод НАПРЯМУЮ в исполняющую функцию — высокосигнальный RCE (мало ложных)
  (re.compile(rb'(?:eval|assert|system|shell_exec|passthru|proc_open|popen|pcntl_exec|create_function)\s*\(\s*@?\s*(?:base64_decode\s*\(\s*|stripslashes\s*\(\s*|trim\s*\(\s*)*\$_(?:GET|POST|REQUEST|COOKIE)'), 'ввод напрямую в eval/system'),
 ]
@@ -172,6 +173,8 @@ def scan_file(p):
 
 def list_files(root, progress=True):
     """Быстрый обход дерева -> список путей (с учётом пропускаемых каталогов)."""
+    if os.path.isfile(root):       # разрешаем сканировать одиночный файл
+        return [root]
     files = []
     for dp, dirs, fs in os.walk(root):
         parts = dp.replace(os.sep, '/').split('/')
