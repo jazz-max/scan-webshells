@@ -1,0 +1,9 @@
+# никогда не коммитить образцы малвари / результаты сканов
+infected/
+danger_archive/
+*.out
+*.log
+*.tar.gz
+*.zip
+*.bak
+Q/
