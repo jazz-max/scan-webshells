@@ -16,7 +16,8 @@
   * --clean-index трогает только INJECT: вырезает первый вредоносный <?php...?>-блок,
     оставляя остальной код. Перед правкой делает .bak рядом с файлом.
 """
-import os, re, sys, argparse, shutil
+import os, re, sys, argparse, shutil, csv
+from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor
 
 # ---- сигнатуры семейств (любая => подозрение на вирус) ----
@@ -207,29 +208,58 @@ def _force_writable(path):
         pass
 
 
+def _fmt_ts(ts):
+    try:
+        return datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
+    except Exception:
+        return '?'
+
+
 def do_quarantine(findings, qdir, root, dry):
     qdir = os.path.abspath(qdir)
     moved = skipped = errors = 0
+    rows = []                              # для forensic-манифеста
     for p, hits, inj in findings:
-        if inj:                       # это INJECT — двигать нельзя, лечится отдельно
+        if inj:                            # это INJECT — двигать нельзя, лечится отдельно
             print(f"  ПРОПУСК (инъекция, лечите --clean-index): {p}")
             skipped += 1
             continue
-        rel = os.path.relpath(p, root)   # путь относительно корня сканирования
+        try:                               # снять времена ДО переноса (это и есть «когда появился файл»)
+            st = os.stat(p)
+            mt, at, ct, size = st.st_mtime, st.st_atime, st.st_ctime, st.st_size
+        except OSError:
+            mt = at = ct = 0; size = -1
+        rel = os.path.relpath(p, root)     # путь относительно корня сканирования
         dest = os.path.join(qdir, rel)
-        print(f"  {'[dry] ' if dry else ''}КАРАНТИН: {p}  ->  {dest}")
+        print(f"  {'[dry] ' if dry else ''}КАРАНТИН: {p}  [изменён: {_fmt_ts(mt)}]  ->  {dest}")
         if not dry:
             try:
                 os.makedirs(os.path.dirname(dest), exist_ok=True)
                 while os.path.exists(dest):
                     dest += '.dup'
-                _force_writable(p)
-                shutil.move(p, dest)
+                shutil.move(p, dest)       # rename / copy2+unlink — mtime и atime сохраняются
+                if mt:
+                    os.utime(dest, (at, mt))   # гарантированно вернуть исходные времена
             except OSError as e:
                 print(f"    ОШИБКА: {e}")
                 errors += 1
                 continue
+        rows.append([p, _fmt_ts(mt), _fmt_ts(ct), size, '; '.join(hits)])
         moved += 1
+    # forensic-манифест: путь + когда файл изменён/появился (переживает перенос)
+    if rows and not dry:
+        manifest = os.path.join(qdir, '_quarantine_manifest.csv')
+        try:
+            os.makedirs(qdir, exist_ok=True)
+            new = not os.path.exists(manifest)
+            with open(manifest, 'a', newline='', encoding='utf-8') as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(['original_path', 'mtime', 'ctime', 'size', 'signatures'])
+                w.writerows(rows)
+            print(f"\nМанифест с датами: {manifest}")
+        except OSError as e:
+            print(f"  не удалось записать манифест: {e}")
     print(f"\nВ карантин: {moved}; пропущено INJECT: {skipped}; ошибок: {errors}")
 
 
