@@ -58,6 +58,21 @@ LOADER_IN_BLOCK = re.compile(
 PHP_OPEN = re.compile(rb'<\?php', re.I)
 
 
+def _php_open_in_head(data, limit=200):
+    """
+    True, если в первых `limit` байтах есть НАСТОЯЩИЙ открывающий тег <?php,
+    а не закомментированный (JS/CSS-трюк "// <?php !! fool phpDocumentor",
+    "* <?php", "# <?php"). Так отсекаются легит joomla.javascript.js и т.п.
+    """
+    for m in re.finditer(rb'<\?php', data[:limit]):
+        ls = data.rfind(b'\n', 0, m.start()) + 1
+        prefix = data[ls:m.start()].lstrip(b'\xef\xbb\xbf\xc3\xaf\xc2\xbb \t\r\n')
+        if not (prefix.startswith(b'//') or prefix.startswith(b'*')
+                or prefix.startswith(b'#') or prefix.startswith(b'/*')):
+            return True
+    return False
+
+
 def classify(data, ext):
     """Вернёт список сработавших сигнатур или None."""
     if any(w.search(data) for w in WHITELIST):
@@ -69,10 +84,9 @@ def classify(data, ext):
     # PHP-файл по расширению или по старту с <?php (с учётом BOM)
     starts_php = data[:80].lstrip(b'\xef\xbb\xbf\xc3\xaf\xc2\xbb \t\r\n').startswith(b'<?php')
     php_file = ext in PHP_EXT or starts_php
-    # PHP, спрятанный в медиа/txt: <?php должен быть В НАЧАЛЕ файла (шелл начинается с него),
-    # + опасная функция. Иначе библиотеки (codemirror, HTMLPurifier, VirtueMart) с <?php
-    # глубоко в тексте дают ложь.
-    if ext in MEDIA_EXT and b'<?php' in data[:200] and DANGER.search(data):
+    # PHP, спрятанный в медиа/txt: <?php должен быть НАСТОЯЩИМ открывающим тегом в начале файла
+    # (не внутри JS/CSS-комментария вроде "// <?php !! fool phpDocumentor") + опасная функция.
+    if ext in MEDIA_EXT and _php_open_in_head(data) and DANGER.search(data):
         hits.add('PHP внутри медиа/txt')
     # обфускация микро-комментариями /*-...-*/ — только в PHP-файлах (бинари давали ложь)
     if php_file and data.count(b'/*-') >= 3:
