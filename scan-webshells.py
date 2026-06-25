@@ -398,6 +398,12 @@ def do_clean_index(findings, dry):
 
 def main():
     global LANG
+    # pre-detect --lang before building the parser, so even --help is localized
+    for i, a in enumerate(sys.argv):
+        if a == '--lang' and i + 1 < len(sys.argv) and sys.argv[i + 1] in ('en', 'ru'):
+            LANG = sys.argv[i + 1]
+        elif a.startswith('--lang=') and a.split('=', 1)[1] in ('en', 'ru'):
+            LANG = a.split('=', 1)[1]
     ap = argparse.ArgumentParser(description=t('Webshell scanner / index.php disinfector.'))
     ap.add_argument('path', nargs='?', default='.', help=t('directory or file to scan'))
     ap.add_argument('--quarantine', metavar='DIR', help=t('move standalone shells into DIR'))
