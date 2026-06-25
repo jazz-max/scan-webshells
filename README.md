@@ -1,205 +1,211 @@
-# scan-webshells.py — сканер и лечилка вебшеллов
+**English** · [Русский](README.ru.md)
 
-Поиск, карантин и лечение веб-шеллов/PHP-загрузчиков после взлома сервера.
-Обходит дерево **сам** (не зависит от `xargs` и длины списка аргументов),
-сканирует **все файлы по содержимому** (не только по расширению),
-работает **на всех ядрах**, **печатает находки сразу** (потоково) и показывает прогресс.
+# scan-webshells.py — webshell scanner & disinfector
+
+Find, quarantine and disinfect web shells / PHP loaders after a server compromise.
+It walks the tree **itself** (no dependency on `xargs` or argument-list length),
+scans **every file by content** (not just by extension), uses **all CPU cores**,
+**streams findings immediately**, and shows progress.
+
+Output is **bilingual**: the language is auto-detected from `$LANG`, or forced with `--lang en|ru`.
 
 ---
 
-## Быстрый старт
+## Quick start
 
 ```bash
-# 1. Посмотреть, что заражено (ничего не меняет, занимает все ядра, имена идут сразу)
+# 1. See what is infected (changes nothing, uses all cores, names stream live)
 python3 scan-webshells.py /var/www | tee found.txt
 
-# 2. ПРЕДПРОСМОТР лечения + карантина — увидеть план, не трогая файлы  ← делать первым
+# 2. PREVIEW disinfect + quarantine — see the plan, touch nothing   ← do this first
 python3 scan-webshells.py /var/www --quarantine /root/Q --clean-index --dry-run | tee plan.txt
 
-# 3. БОЕВОЙ запуск: вылечить index.php + унести цельные шеллы в карантин
+# 3. FOR REAL: disinfect index.php + move standalone shells to quarantine
 python3 scan-webshells.py /var/www --quarantine /root/Q --clean-index | tee clean.log
 ```
 
-Требуется только Python 3 (стандартная библиотека, без внешних пакетов).
+Requires only Python 3 (standard library, no external packages).
 
 ---
 
-## Флаги
+## Flags
 
-| Флаг | Что делает |
+| Flag | What it does |
 |---|---|
-| `path` | каталог для сканирования (по умолчанию текущий) |
-| `--quarantine DIR` | перенести **цельные шеллы** в `DIR` (с сохранением путей) |
-| `--clean-index` | вырезать инъекцию из заражённых `index.php` (бэкап в `.bak`) |
-| `--dry-run` | только показать, что было бы сделано — **ничего не менять** |
-| `--quiet` | без индикатора прогресса (для cron/логов) |
-| `-j N`, `--jobs N` | число параллельных процессов (по умолчанию = число ядер) |
-| `-h`, `--help` | справка |
+| `path` | directory or file to scan (default: current) |
+| `--quarantine DIR` | move **standalone shells** into `DIR` (paths preserved) |
+| `--clean-index` | strip the injected block from infected `index.php` (backup to `.bak`) |
+| `--dry-run` | show what *would* be done — **change nothing** |
+| `--quiet` | no progress indicator (for cron/logs) |
+| `-j N`, `--jobs N` | number of parallel processes (default = CPU cores) |
+| `--lang en\|ru` | output language (default: auto from `$LANG`) |
+| `-h`, `--help` | help |
 
 ---
 
-## Вывод и прогресс
+## Output & progress
 
-- **Находки печатаются в реальном времени** (в `stdout`), как только обнаружены, —
-  не нужно ждать окончания скана:
+- **Findings print in real time** (to `stdout`) as soon as they are discovered — no need to wait
+  for the scan to finish:
   ```
-  === НАЙДЕНО (выводится по мере обнаружения) ===
-  [INJECT] /var/www/.../index.php   =>  goto-загрузчик A
-  [FULL]   /var/www/.../accesson.php =>  accesson бэкдор
+  === FINDINGS (streamed as discovered) ===
+  [INJECT] /var/www/.../index.php   =>  goto loader (family A)
+  [FULL]   /var/www/.../accesson.php =>  accesson backdoor
   ```
-- **Прогресс** идёт в `stderr` отдельной перезаписываемой строкой и показывает процент:
+- **Progress** goes to `stderr` as a single self-overwriting line with a percentage:
   ```
-  [661800/1412292 46% найдено:95] 32 ядра
-  Готово: обработка завершена, найдено 312
+  [661800/1412292 46% found:95] 32 cores
+  Done: finished, found 312
   ```
-- Прогресс **автоматически отключается**, если вывод не в живой терминал
-  (`| tee`, `> файл`, `| grep`), чтобы не мешать. Принудительно — флагом `--quiet`.
-- **Ctrl+C** останавливает корректно: печатает «ПРЕРВАНО … найдено N» без traceback;
-  при прерывании действия (`--quarantine`/`--clean-index`) **не выполняются**
-  (список неполный). Для боевого прогона дайте скану доработать до конца.
+- Progress **auto-disables** when output is not a live terminal (`| tee`, `> file`, `| grep`),
+  so it never pollutes the findings. Force it off with `--quiet`.
+- **Ctrl+C** stops cleanly: it prints "INTERRUPTED … found N" with no traceback; on interruption
+  the actions (`--quarantine`/`--clean-index`) are **not** run (the list is incomplete). For a real
+  run, let the scan finish.
 
 ---
 
-## Типовые запуски
+## Common invocations
 
 ```bash
-# Список только найденных файлов (без блоков действий)
+# Just the matched files (no action blocks)
 python3 scan-webshells.py /var/www --dry-run | grep -E '^\[(FULL|INJECT)\]'
 
-# Только лечение index.php (без карантина остального)
+# Disinfect index.php only (don't quarantine the rest)
 python3 scan-webshells.py /var/www --clean-index
 
-# Только карантин цельных шеллов (index.php не трогать)
+# Quarantine standalone shells only (leave index.php alone)
 python3 scan-webshells.py /var/www --quarantine /root/Q
 
-# Ограничить нагрузку (прод под нагрузкой — 8 ядер вместо 32)
+# Limit load (busy prod — 8 cores instead of 32)
 python3 scan-webshells.py /var/www -j 8
 
-# Старый однопоточный режим (отладка / сравнение)
+# Old single-threaded mode (debug / comparison)
 python3 scan-webshells.py /var/www --jobs 1
+
+# Russian output
+python3 scan-webshells.py /var/www --lang ru
 ```
 
 ---
 
-## Рекомендуемый порядок на проде
+## Recommended order on production
 
 ```bash
-# 1. посмотреть план (записать в файл — будет полный список даже если терминал закроется)
+# 1. review the plan (write to a file — full list survives even if the terminal closes)
 python3 scan-webshells.py /var/www --quarantine /root/Q --clean-index --dry-run | tee /root/plan.txt
 
-# 2. выполнить (дать доработать до конца, НЕ прерывать)
+# 2. execute (let it finish — do NOT interrupt)
 python3 scan-webshells.py /var/www --quarantine /root/Q --clean-index | tee /root/clean.log
 
-# 3. проверить, что сайты работают
+# 3. verify the sites still work
 
-# 4. только потом удалить бэкапы и карантин
-find /var/www -name '*.bak' -newermt '-1 hour'   # сначала посмотреть, что удалится
+# 4. only then remove backups and quarantine
+find /var/www -name '*.bak' -newermt '-1 hour'   # check first what would be deleted
 ```
 
-На больших деревьях (миллионы файлов) скан идёт несколько минут даже на 32 ядрах —
-имена бегут в реальном времени, видно, что процесс живой.
+On large trees (millions of files) the scan takes a few minutes even on 32 cores —
+names stream in real time, so you can see it is alive.
 
 ---
 
-## Как классифицируются находки: FULL vs INJECT
+## How findings are classified: FULL vs INJECT
 
-- **`[FULL]`** — файл **целиком вирус** (`accesson.php`, `cache.php`, `w.php`, `.tmp`,
-  медиа-пустышки `.ico/.gif/.wma/.wmv`, BOM-вебшеллы и т.п.).
-  Их забирает `--quarantine` (перенос = бэкап).
-- **`[INJECT]`** — **легитимный файл сайта с вставкой сверху** (например главный `index.php`).
-  Его `--quarantine` **не трогает**, а `--clean-index` вырезает только вредоносный
-  `<?php…?>`-блок в начале и кладёт оригинал в `.bak` рядом.
+- **`[FULL]`** — the **whole file is malware** (`accesson.php`, `cache.php`, `w.php`, `.tmp`,
+  media stubs `.ico/.gif/.wma/.wmv`, BOM webshells, …). `--quarantine` takes these (move = backup).
+- **`[INJECT]`** — a **legit site file with a prepended block** (e.g. the main `index.php`,
+  `vendor/composer/autoload_real.php`). `--quarantine` **leaves it alone**; `--clean-index`
+  removes only the malicious leading `<?php…?>` block(s) and writes the original to `.bak`.
 
-Эти два множества не пересекаются: `--clean-index` и `--quarantine` можно запускать вместе.
+The two sets do not overlap — `--clean-index` and `--quarantine` can be run together.
 
 ---
 
-## Forensic: даты файлов и манифест
+## Forensics: file dates & manifest
 
-`--quarantine` сохраняет **mtime** (время изменения = когда файл записан/появился) при переносе
-и пишет CSV-манифест `_quarantine_manifest.csv` в папку карантина:
+`--quarantine` preserves **mtime** (when the file was written / appeared) during the move and
+writes a CSV manifest `_quarantine_manifest.csv` into the quarantine directory:
 
 ```
 original_path,mtime,ctime,size,signatures
-/var/www/.../accesson.php,2026-05-12 03:41:09,2026-05-12 03:41:09,212,accesson бэкдор
+/var/www/.../accesson.php,2026-05-12 03:41:09,2026-05-12 03:41:09,212,accesson backdoor
 ```
 
-В выводе дата изменения видна сразу: `КАРАНТИН: …/shell.php  [изменён: 2026-05-12 03:41:09]`.
+The modification date is also shown inline: `QUARANTINE: …/shell.php  [modified: 2026-05-12 03:41:09]`.
 
-Нюансы:
-- **mtime** — основной forensic-признак «когда появился файл», переносится без изменений;
-- **ctime** (время inode) при любом переносе/копировании меняется — поэтому он снимается
-  и записывается в манифест **до** переноса;
-- mtime атакующий мог подделать (`touch`), поэтому сверяйте с логами веб-сервера и соседними
-  файлами в той же папке.
-
----
-
-## Что детектируется
-
-Сканер заточен под обнаруженный набор и ловит несколько семейств:
-
-- goto-обфусцированные загрузчики (range-инъекция, скрытые метки, hex/octal-строки);
-- `Sy1Lz`-упакованные шеллы (многослойный gzinflate/base64);
-- WSO / FilesMan (`Watching webshell`, переменные-псевдографика);
-- xleet-шеллы (`//Pass: xleet`);
-- мини-бэкдор `accesson.php` (`eval(base64_decode($_REQUEST))` + аплоад);
-- AES-gated файл-менеджеры (`pw_name_*`);
-- base64/`zip://`-инклюды медиа-пустышек;
-- WP-маскировка с `eval(pre_term_name())`;
-- BOM-вебшеллы (двойной BOM + `@session_start`);
-- обфускация микро-комментариями `/*-…-*/` и hex-кодированные суперглобалы;
-- PHP-код, спрятанный в медиа/`.txt`-файлах (только при наличии опасных функций),
-  и `.zip` с `.tmp`-загрузчиком внутри;
-- Joomla-кампания: переинфектор `$zym_decrypt` в `vendor/composer/autoload_real.php`
-  + дроп файл-менеджеров в папках-фамилиях (`zhou/zheng/wu/...`) с `.htaccess`-реактиватором
-  PHP; ROT13- и китайские шеллы, `EVAL()`-обфускация, ввод напрямую в `eval/system`.
-
-> **Composer-автозагрузчики проверяются даже внутри `vendor/`** (`autoload_real.php`,
-> `ClassLoader.php` и т.п.) — это типичная цель переинфекторов, исполняется на каждом
-> запросе. Остальной `vendor/` пропускается для скорости.
-
-Сканирование идёт по **содержимому**, поэтому шелл под именем `logo.png` или
-файл без расширения тоже будет найден.
-
-Пропускаются (для скорости) каталоги `vendor/`, `node_modules/`, `.git/`;
-из каждого файла читаются первые 3 МБ (вставки-загрузчики всегда в начале файла).
+Notes:
+- **mtime** is the key "when did the file appear" signal — it is moved without change;
+- **ctime** (inode change time) changes on any move/copy — so it is captured and written to the
+  manifest **before** the move;
+- mtime can be backdated by the attacker (`touch`), so cross-check with web-server logs and the
+  neighbouring files in the same directory.
 
 ---
 
-## Ложные срабатывания
+## What is detected
 
-Эвристики настроены так, чтобы не шуметь на больших смешанных деревьях:
+The scanner is tuned for an observed kit and catches several families:
 
-- WSO/FilesMan: строка `Watching webshell` ищется везде, а переменные-псевдографика `$▛`
-  ищутся **только в PHP-файлах** — иначе байт `▛` массово ловит JPEG и прочие бинари;
-- `/*-`-обфускация проверяется **только в PHP-файлах** (по расширению или старту с `<?php`) —
-  бинарные файлы и JS-библиотеки (prototype.js и т.п.) её больше не вызывают;
-- «PHP внутри медиа/txt» срабатывает только если `<?php` стоит **в начале файла** (первые 200 байт)
-  **и** есть опасная функция (`eval/base64_decode/$_POST/...`) — поэтому подсветка синтаксиса
-  (codemirror), HTMLPurifier и шаблоны с `<?php` глубоко в тексте не ловятся;
-- легитимные установщики (Akeeba/kickstart) в белом списке.
+- goto-obfuscated loaders (range injection, hidden labels, hex/octal strings);
+- `Sy1Lz`-packed shells (multi-layer gzinflate/base64);
+- WSO / FilesMan (`Watching webshell`, box-drawing variable names);
+- xleet shells (`//Pass: xleet`);
+- the `accesson.php` mini-backdoor (`eval(base64_decode($_REQUEST))` + upload);
+- AES-gated file managers (`pw_name_*`);
+- base64 / `zip://` includes of media stubs;
+- WordPress-style disguise with `eval(pre_term_name())`;
+- BOM webshells (double BOM + `@session_start`);
+- micro-comment `/*-…-*/` obfuscation and hex-encoded superglobals;
+- PHP hidden in media/`.txt` files (only when dangerous functions are present), and `.zip`
+  archives containing a `.tmp` loader;
+- the Joomla campaign: the `$zym_decrypt` re-infector in `vendor/composer/autoload_real.php`
+  plus file managers dropped into surname-named dirs (`zhou/zheng/wu/...`) with a PHP-re-enabling
+  `.htaccess`; ROT13 and Chinese shells, `EVAL()` obfuscation, unauthenticated Uploadify
+  uploaders, and user input passed directly into `eval/system`.
 
-Если что-то всё же помечено ошибочно — это видно по типу сигнатуры в выводе;
-такие файлы можно исключить или поправить список `SIG`/`WHITELIST` в начале скрипта.
+> **Composer autoloaders are scanned even inside `vendor/`** (`autoload_real.php`,
+> `ClassLoader.php`, …) — a classic re-infector target that runs on every request. The rest of
+> `vendor/`, plus `node_modules/` and `.git/`, are skipped for speed.
+
+Scanning is **by content**, so a shell named `logo.png` or a file with no extension is found too.
+The first 3 MB of each file is read (loader injections are always at the top of the file).
 
 ---
 
-## Важные предупреждения
+## False positives
 
-- Карантин-папку (`/root/Q`) держите **вне** сканируемого дерева, не внутри `/var/www`.
-- `.bak` и карантин удаляйте **после** проверки работоспособности сайтов.
-- Файлы могут стоять в `chmod 444` (это приём малвари) — скрипт снимает read-only сам.
-  Если файлы принадлежат не вам (например `www-data`) — запускайте через `sudo`.
-- Это **RCE-компрометация**. Помимо чистки файлов обязательно: смените пароли/ключи
-  БД и API, проверьте `crontab`, свежие файлы в `uploads/` и `assets/images*/`,
-  сверьте код сайта с git/бэкапом.
+Heuristics are tuned not to be noisy on large mixed trees:
+
+- WSO/FilesMan: the string `Watching webshell` is matched everywhere, but the box-drawing
+  variables `$▛` are matched **only in PHP files** — otherwise the byte `▛` floods on JPEGs and
+  other binaries;
+- `/*-` obfuscation is checked **only in PHP files** (by extension or starting with `<?php`) — so
+  binaries and JS libraries (prototype.js, …) no longer trigger it;
+- "PHP inside media/txt" fires only when `<?php` is **at the top of the file** (first 200 bytes)
+  **and** a dangerous function is present — so syntax highlighters (codemirror), HTMLPurifier and
+  templates with `<?php` deep in the text are not flagged;
+- the legit Akeeba installer is whitelisted.
+
+If something is still flagged wrongly, you can see it by the signature label in the output;
+exclude such files or edit the `SIG` / `WHITELIST` lists at the top of the script.
 
 ---
 
-## Ограничения
+## Important warnings
 
-- Сигнатурный детектор настроен на конкретный набор вирусов. Против принципиально
-  иной малвари нужны новые сигнатуры — добавляются в список `SIG` в начале скрипта.
-- Действия (`--quarantine`, `--clean-index`) выполняются однопоточно (там единицы
-  файлов); параллелится только сканирование.
+- Keep the quarantine dir (`/root/Q`) **outside** the scanned tree, not inside `/var/www`.
+- Delete `.bak` files and the quarantine **after** verifying the sites still work.
+- Files may be `chmod 444` (a malware trick) — the script drops read-only itself. If the files are
+  not owned by you (e.g. `www-data`), run it via `sudo`.
+- This is an **RCE compromise**. Besides cleaning files: rotate DB and API passwords/keys, check
+  `crontab`, recent files in `uploads/` and `assets/images*/`, and diff the site code against
+  git/backups.
+
+---
+
+## Limitations
+
+- The signature detector is tuned for a specific set of families. For fundamentally different
+  malware, add signatures to the `SIG` list at the top of the script.
+- The actions (`--quarantine`, `--clean-index`) run single-threaded (only a handful of files);
+  only scanning is parallelized.
