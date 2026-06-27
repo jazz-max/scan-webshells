@@ -31,8 +31,7 @@ Two things shaped this scanner:
 - Plain `git status` is what actually surfaced the intrusion (untracked `??` shells, modified ` M`
   injections) — that observation became a companion tool, [gitmon](https://github.com/jazz-max/gitmon).
 
-> 📺 **Demo:** _[asciinema / GIF placeholder — record a scan of an infected tree showing streamed
-> `[FULL]`/`[INJECT]` findings, then a `--clean-index --dry-run` plan, and embed it here.]_
+![scan-webshells demo — finds shells in a throwaway infected tree while leaving a legit `preg_match()` file alone. Run it yourself: `./demo.sh`](docs/demo.gif)
 
 ---
 

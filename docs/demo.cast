@@ -1,0 +1,12 @@
+{"version": 2, "width": 104, "height": 18, "timestamp": 1782590826, "env": {"TERM": "xterm-256color", "SHELL": "/bin/bash"}}
+[0.4, "o", "\u001b[32m$\u001b[0m ./demo.sh\r\n"]
+[1.0, "o", "\u001b[36m### scan-webshells demo \u2014 throwaway infected tree (harmless markers)\u001b[0m\r\n"]
+[1.4, "o", "\r\n=== FINDINGS (streamed as discovered) ===\r\n"]
+[1.7, "o", "\u001b[31m[FULL]\u001b[0m   demo-site/index.php                   =>  range() injection\r\n"]
+[1.98, "o", "\u001b[31m[FULL]\u001b[0m   demo-site/zhou/x.php                  =>  xleet shell\r\n"]
+[2.26, "o", "\u001b[31m[FULL]\u001b[0m   demo-site/zhou/manager.php            =>  WSO/FilesMan\r\n"]
+[2.54, "o", "\u001b[31m[FULL]\u001b[0m   demo-site/uploads/up.php              =>  unauthenticated uploader (Uploadify)\r\n"]
+[2.82, "o", "\u001b[31m[FULL]\u001b[0m   demo-site/uploads/images/logo.gif     =>  PHP inside media/txt\r\n"]
+[3.32, "o", "\r\n\u001b[1mTOTAL: 5\u001b[0m  (injections: 0, standalone shells: 5)\r\n"]
+[3.82, "o", "\u001b[32m\u2713 legit_helper.php (uses preg_match) \u2014 NOT flagged\u001b[0m\r\n"]
+[4.42, "o", "\r\n\u001b[2m### temp tree removed automatically \u2014 nothing modified.\u001b[0m\r\n"]
