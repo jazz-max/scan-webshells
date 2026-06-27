@@ -11,6 +11,58 @@ Output is **bilingual**: the language is auto-detected from `$LANG`, or forced w
 
 ---
 
+## Real-world origin
+
+This tool was written while cleaning up a real breach. A production web server (a Joomla site,
+some legacy PHP, and Laravel apps) was compromised through a **vulnerable Joomla component**, and
+the attacker dropped a whole *zoo* of shells: goto-obfuscated loaders injected into `index.php`
+and disguised as `.tmp`/`.wma`/`.ico`/`.gif` "media", multi-layer `Sy1Lz`-packed shells (including
+an AES-gated file manager), a WSO/FilesMan "Watching webshell", an xleet shell, a 212-byte
+`accesson.php` mini-backdoor copied 17×, BOM shells, and a WordPress-style `eval(pre_term_name())`
+disguise. Worst of all, a **re-infector** welded into Composer's `vendor/composer/autoload_real.php`
+ran on *every request* and kept re-dropping fresh file-manager shells — so deleting one just brought
+it back on the next page load. (Lesson burned in hard: **kill the re-infector first.**)
+
+Two things shaped this scanner:
+
+- A naive finder script flagged **~3,085 files** as "infected" — only **~30** were real malware.
+  One of its signatures was `reg_match`, a **substring of `preg_match()`**, so it matched nearly
+  every PHP file that used a regex. Signature specificity and *context* are the whole game.
+- Plain `git status` is what actually surfaced the intrusion (untracked `??` shells, modified ` M`
+  injections) — that observation became a companion tool, [gitmon](https://github.com/jazz-max/gitmon).
+
+> 📺 **Demo:** _[asciinema / GIF placeholder — record a scan of an infected tree showing streamed
+> `[FULL]`/`[INJECT]` findings, then a `--clean-index --dry-run` plan, and embed it here.]_
+
+---
+
+## Why this, and how it compares
+
+`scan-webshells` is not trying to replace your antivirus or CMS firewall — it fills a specific gap:
+a **fast, auditable, server-side** scanner for obfuscated PHP shell families, with surgical
+cleanup, that drops onto any box with nothing to install.
+
+| | **scan-webshells** | ClamAV | maldet / LMD | Wordfence / Sucuri |
+|---|---|---|---|---|
+| Type | Single Python script | Signature-DB AV | Signature-DB scanner | CMS plugin / SaaS |
+| Dependencies | None (Py3 stdlib) | Daemon + virus DB | Perl + ClamAV + DB | Runs inside the CMS |
+| Detection model | Content **+ context**, tuned to obfuscated PHP shell **families** | Generic signature DB | Signature DB | CMS rules / cloud |
+| Scope | Any path, CMS-agnostic, many sites at once | Whole FS | Whole FS | The single CMS it lives in |
+| Runs inside the attackable app? | **No** (out of band) | No | No | **Yes** |
+| FP tuning | Whitelists legit libs (CodeMirror, HTMLPurifier, Akeeba, minified JS); PHP-only heuristics | DB-dependent | DB-dependent | CMS-dependent |
+| Surgical cleanup | `--clean-index` strips **only** the injected block, keeps site code (auto `.bak`) | quarantine whole file | quarantine / clean | plugin repair |
+| Quarantine + forensics | moves standalone shells, preserves mtime, writes CSV manifest | quarantine | quarantine | varies |
+| FULL vs INJECT | **Yes** — cleans a legit `index.php` instead of quarantining it | no | no | n/a |
+| Auditability | a few-hundred-line script you can read end to end | large code + opaque DB | large code + opaque DB | closed |
+
+**Honest summary:** ClamAV, maldet/LMD and Wordfence/Sucuri are good at broad DB-driven coverage and
+CMS-integrated protection. `scan-webshells` is deliberately narrow and complementary: no database to
+update, nothing to install, CMS-agnostic, works across many sites at once, doesn't run as part of the
+web app an attacker just compromised, and gives you a scalpel (`--clean-index`) instead of only a
+sledgehammer.
+
+---
+
 ## Quick start
 
 ```bash
